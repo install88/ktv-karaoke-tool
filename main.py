@@ -12,7 +12,41 @@ from typing import Optional
 from downloader import MediaDownloader
 from audio_processing import AudioProcessor
 from subtitles import SubtitleGenerator
+from urllib.parse import urlparse, parse_qs
 
+
+def clean_youtube_url(raw_url: str) -> str:
+    """
+    把各種長長的 YouTube 連結（含 list=、start_radio= 等）縮成
+    https://www.youtube.com/watch?v=VIDEO_ID 的標準型式。
+    如果不是 YouTube，就原樣回傳。
+    """
+    raw_url = raw_url.strip()
+    if not raw_url:
+        raise ValueError("YouTube URL 不可為空")
+
+    # 先處理 youtu.be 短網址，例如:
+    # https://youtu.be/KWymGqoI2FU?list=xxx
+    if "youtu.be/" in raw_url:
+        video_id = raw_url.split("youtu.be/")[-1].split("?")[0].split("&")[0]
+        return f"https://www.youtube.com/watch?v={video_id}"
+
+    parsed = urlparse(raw_url)
+
+    # 如果 domain 不是 YouTube，就不要亂動，直接回傳
+    if "youtube.com" not in parsed.netloc and "youtu.be" not in parsed.netloc:
+        return raw_url
+
+    qs = parse_qs(parsed.query)
+    video_id = qs.get("v", [None])[0]
+
+    if not video_id:
+        # 找不到 v 參數，就原樣回傳（避免弄壞一些奇怪格式）
+        return raw_url
+
+    # 統一轉成乾淨版：
+    # https://www.youtube.com/watch?v=VIDEO_ID
+    return f"https://www.youtube.com/watch?v={video_id}"
 
 def setup_logging(log_folder: str = "./logs", log_level: str = "INFO") -> None:
     log_path = Path(log_folder)
@@ -57,38 +91,42 @@ def print_banner():
 
 
 def get_user_input():
-    print("Select input type:")
-    print("  1) YouTube URL")
-    print("  2) Local file path")
+    # print("Select input type:")
+    # print("  1) YouTube URL")
+    # print("  2) Local file path")
     
-    while True:
-        choice = input("\nEnter choice (1 or 2): ").strip()
-        if choice in ['1', '2']:
-            break
-        print("Invalid choice. Please enter 1 or 2.")
+    # while True:
+    #     choice = input("\nEnter choice (1 or 2): ").strip()
+    #     if choice in ['1', '2']:
+    #         break
+    #     print("Invalid choice. Please enter 1 or 2.")
     
-    input_type = "url" if choice == '1' else "local"
+    # input_type = "url" if choice == '1' else "local"
+    input_type = "url"
     
     if input_type == "url":
-        input_value = input("\nEnter YouTube URL: ").strip()
+        raw_url = input("\nEnter YouTube URL: ").strip()
+        input_value = clean_youtube_url(raw_url)
     else:
         input_value = input("\nEnter local file path: ").strip()
     
-    print("\nSelect output format:")
-    print("  1) MP3 (audio only)")
-    print("  2) MP4 (video)")
+    # print("\nSelect output format:")
+    # print("  1) MP3 (audio only)")
+    # print("  2) MP4 (video)")
     
-    while True:
-        format_choice = input("\nEnter choice (1 or 2): ").strip()
-        if format_choice in ['1', '2']:
-            break
-        print("Invalid choice. Please enter 1 or 2.")
+    # while True:
+    #     format_choice = input("\nEnter choice (1 or 2): ").strip()
+    #     if format_choice in ['1', '2']:
+    #         break
+    #     print("Invalid choice. Please enter 1 or 2.")
     
-    output_format = "mp3" if format_choice == '1' else "mp4"
+    # output_format = "mp3" if format_choice == '1' else "mp4"
+    output_format = "mp4"
     
-    output_folder = input("\nEnter output folder (press Enter for default './output'): ").strip()
-    if not output_folder:
-        output_folder = "./output"
+    # output_folder = input("\nEnter output folder (press Enter for default './output'): ").strip()
+    # if not output_folder:
+    #     output_folder = "./output"
+    output_folder = "./output"
     
     print("\n" + "-"*60)
     print("Summary:")
@@ -98,10 +136,10 @@ def get_user_input():
     print(f"  Output folder: {output_folder}")
     print("-"*60 + "\n")
     
-    confirm = input("Proceed? (y/n): ").strip().lower()
-    if confirm != 'y':
-        print("Operation cancelled.")
-        sys.exit(0)
+    # confirm = input("Proceed? (y/n): ").strip().lower()
+    # if confirm != 'y':
+    #     print("Operation cancelled.")
+    #     sys.exit(0)
     
     return input_type, input_value, output_format, output_folder
 
@@ -208,10 +246,10 @@ def main():
         finally:
             if not config.get('keep_temp_files', False):
                 logger.info("Cleaning up temporary files")
-                try:
-                    downloader.cleanup()
-                except Exception as cleanup_error:
-                    logger.warning(f"Error during cleanup: {cleanup_error}")
+                # try:
+                #     downloader.cleanup()
+                # except Exception as cleanup_error:
+                #     logger.warning(f"Error during cleanup: {cleanup_error}")
         
         print("\n" + "="*60)
         print("  Processing Complete!")

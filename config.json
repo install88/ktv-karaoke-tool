@@ -8,7 +8,7 @@
   },
   "speech_to_text": {
     "model": "base",
-    "language": "auto"
+    "language": "zh"
   },
   "subtitle_format": "ass",
   "logging": {

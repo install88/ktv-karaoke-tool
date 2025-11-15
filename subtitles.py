@@ -41,17 +41,30 @@ class SubtitleGenerator:
         
         logger.info(f"Transcribing audio: {audio_file}")
         
+        # transcribe_options = {
+        #     "word_timestamps": True,
+        #     "verbose": False
+        # }
+        # CHANGED: 明確指定 task="transcribe"，避免做翻譯
         transcribe_options = {
             "word_timestamps": True,
-            "verbose": False
-        }
+            "verbose": False,
+            "task": "transcribe",   # ★ 新增：強制做聽寫，不要翻譯成英文
+        }        
         
+        # 如果 config.json 指定了語言（例如 "zh"），就塞進去
         if language and language != "auto":
             transcribe_options["language"] = language
         
         try:
             result = self.model.transcribe(audio_file, **transcribe_options)
-            logger.info(f"Transcription completed. Found {len(result.get('segments', []))} segments")
+            
+            # NEW: 把 Whisper 自動偵測到的語言印出來，方便你確認
+            detected_lang = result.get("language", "unknown")
+            logger.info(
+                f"Transcription completed. Detected language={detected_lang}, "
+                f"segments={len(result.get('segments', []))}"
+            )
             return result
         except Exception as e:
             logger.error(f"Transcription failed: {e}")
