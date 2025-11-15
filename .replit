@@ -16,10 +16,10 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
-args = "System Check"
+args = "KTV System Check"
 
 [[workflows.workflow]]
-name = "System Check"
+name = "KTV System Check"
 author = "agent"
 
 [[workflows.workflow.tasks]]
