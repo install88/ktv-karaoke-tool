@@ -181,22 +181,37 @@ def main():
         print("[7/7] Creating final files and saving to output folder...")
         logger.info("Step 7: Creating final output files")
         
-        if output_format == "mp3":
-            final_output = output_path / f"{title}_ktv.mp3"
-            processor.convert_to_mp3(str(ktv_mix_file), str(final_output))
-        else:
-            final_output = output_path / f"{title}_ktv.mp4"
-            processor.create_video_with_audio(
-                media_file if input_type == "url" or Path(input_value).suffix in ['.mp4', '.avi', '.mkv'] else None,
-                str(ktv_mix_file),
-                str(final_output)
-            )
-        
-        print(f"  ✓ Final file created")
-        
-        if not config.get('keep_temp_files', False):
-            logger.info("Cleaning up temporary files")
-            downloader.cleanup()
+        try:
+            if output_format == "mp3":
+                final_output = output_path / f"{title}_ktv.mp3"
+                processor.convert_to_mp3(str(ktv_mix_file), str(final_output))
+            else:
+                final_output = output_path / f"{title}_ktv.mp4"
+                video_source = None
+                if input_type == "url" or (input_type == "local" and Path(input_value).suffix.lower() in ['.mp4', '.avi', '.mkv', '.mov', '.flv']):
+                    video_source = media_file
+                    if not Path(video_source).exists():
+                        logger.warning(f"Video source file not found: {video_source}")
+                        video_source = None
+                
+                processor.create_video_with_audio(
+                    video_source,
+                    str(ktv_mix_file),
+                    str(final_output)
+                )
+            
+            print(f"  ✓ Final file created")
+            
+        except Exception as e:
+            logger.error(f"Error creating final output: {e}")
+            raise
+        finally:
+            if not config.get('keep_temp_files', False):
+                logger.info("Cleaning up temporary files")
+                try:
+                    downloader.cleanup()
+                except Exception as cleanup_error:
+                    logger.warning(f"Error during cleanup: {cleanup_error}")
         
         print("\n" + "="*60)
         print("  Processing Complete!")

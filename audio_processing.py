@@ -75,16 +75,30 @@ class AudioProcessor:
             instrumental_file = separated_dir / "no_vocals.wav"
             
             if not vocals_file.exists() or not instrumental_file.exists():
-                raise FileNotFoundError("Demucs did not produce expected output files")
+                logger.error(f"Demucs did not produce expected output files at {separated_dir}")
+                raise RuntimeError(
+                    f"Demucs processing completed but output files are missing.\n"
+                    f"Expected: {vocals_file} and {instrumental_file}\n"
+                    "This may indicate a processing error or unsupported audio format."
+                )
             
             logger.info(f"Vocals: {vocals_file}")
             logger.info(f"Instrumental: {instrumental_file}")
             
             return str(vocals_file), str(instrumental_file)
             
+        except FileNotFoundError as e:
+            logger.error("Demucs command not found")
+            raise RuntimeError(
+                "Demucs is not installed or not in PATH. Please install it with: pip install demucs\n"
+                "Note: Demucs requires significant disk space (~2GB) and PyTorch."
+            ) from e
         except subprocess.CalledProcessError as e:
             logger.error(f"Demucs error: {e.stderr}")
-            raise
+            raise RuntimeError(
+                f"Demucs vocal separation failed. Error: {e.stderr}\n"
+                "This may be due to insufficient memory or missing dependencies."
+            ) from e
 
     def create_ktv_stereo_mix(
         self,

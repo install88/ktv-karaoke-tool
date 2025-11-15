@@ -19,12 +19,22 @@ class SubtitleGenerator:
 
     def load_model(self):
         if whisper is None:
-            raise ImportError("OpenAI Whisper is not installed")
+            raise RuntimeError(
+                "OpenAI Whisper is not installed. Please install it with: pip install openai-whisper\n"
+                "Note: Whisper requires PyTorch and significant disk space for models."
+            )
         
         if self.model is None:
             logger.info(f"Loading Whisper model: {self.model_size}")
-            self.model = whisper.load_model(self.model_size)
-            logger.info("Whisper model loaded successfully")
+            try:
+                self.model = whisper.load_model(self.model_size)
+                logger.info("Whisper model loaded successfully")
+            except Exception as e:
+                logger.error(f"Failed to load Whisper model: {e}")
+                raise RuntimeError(
+                    f"Failed to load Whisper model '{self.model_size}'. Error: {e}\n"
+                    "The model will be downloaded on first use, which requires internet connection."
+                ) from e
 
     def transcribe_audio(self, audio_file: str, language: Optional[str] = None) -> Dict:
         self.load_model()
@@ -39,10 +49,16 @@ class SubtitleGenerator:
         if language and language != "auto":
             transcribe_options["language"] = language
         
-        result = self.model.transcribe(audio_file, **transcribe_options)
-        
-        logger.info(f"Transcription completed. Found {len(result.get('segments', []))} segments")
-        return result
+        try:
+            result = self.model.transcribe(audio_file, **transcribe_options)
+            logger.info(f"Transcription completed. Found {len(result.get('segments', []))} segments")
+            return result
+        except Exception as e:
+            logger.error(f"Transcription failed: {e}")
+            raise RuntimeError(
+                f"Whisper transcription failed. Error: {e}\n"
+                "This may be due to audio format issues or insufficient memory."
+            ) from e
 
     def format_timestamp_srt(self, seconds: float) -> str:
         hours = int(seconds // 3600)
