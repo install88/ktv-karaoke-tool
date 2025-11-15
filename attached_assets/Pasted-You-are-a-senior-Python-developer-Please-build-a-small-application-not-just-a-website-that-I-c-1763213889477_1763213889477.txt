@@ -1,0 +1,222 @@
+You are a senior Python developer.  
+Please build a small application (not just a website) that I can later package into a desktop app (e.g., a single .exe on Windows).
+
+Overall goal
+------------
+I want a “YouTube/local file → KTV file” tool.
+
+User experience I want:
+
+1. I open the program on my computer.
+2. The program asks me for:
+   - A YouTube URL **or** a local video/audio file path (that I own the rights to).
+   - The desired output format: `mp3` or `mp4`.
+   - An output folder path (if I just press Enter, default to `./output`).
+3. I confirm, then the program runs the whole process.
+4. When it’s done, it prints where the final files are saved:
+   - KTV audio/video file (`.mp3` or `.mp4`).
+   - Subtitle file (e.g., `.srt` or `.ass`).
+   All saved into the specified output folder.
+
+IMPORTANT legal note
+--------------------
+- Only support content that the user has the rights to process.
+- If you implement YouTube download, you must respect YouTube’s terms of service and **must not** bypass DRM.
+- In the code, keep the “download from URL” step abstracted behind a function like `download_media(url)`, so I can replace it with a legal/official method or skip it and only use local files.
+- The app must also support a “local file mode” where I directly give it a file path and no YouTube download is needed.
+
+Application behavior (step by step)
+-----------------------------------
+When I run the program (a terminal-based app is OK):
+
+1. Show a simple menu / prompt sequence:
+   - Ask:
+     - Input type: `1) YouTube URL` or `2) Local file path`.
+     - If YouTube: ask me to paste the URL.
+     - If Local: ask me to input the file path.
+     - Ask me to choose output format: `mp3` or `mp4`.
+     - Ask me for an output folder (default: `./output` if I press Enter).
+
+2. After I confirm, the program should:
+
+   (1) Validate input
+       - Validate the URL or check that the local file path exists.
+       - If invalid, show a clear error and exit gracefully.
+
+   (2) Download or copy the media
+       - If input is a URL, use `download_media(url)` to get the media file into a temporary working folder.
+       - If input is a local file, copy it into the temporary working folder (or just reference it).
+
+   (3) Extract audio
+       - Use FFmpeg to extract the audio track into a standard format (e.g., WAV) for processing.
+
+   (4) Vocal separation
+       - Use a vocal separation / source separation library (e.g., Spleeter, Demucs, or similar) to split the audio into:
+         - Vocals track
+         - Instrumental (background music) track
+
+   (5) KTV-style stereo mixing (vocal control via left/right channel)
+       - Re-mix the separated tracks into a **stereo** audio file with this structure:
+         - LEFT channel:
+           - Mostly instrumental (vocals volume greatly reduced or muted).
+         - RIGHT channel:
+           - Instrumental + **normal vocal volume** (like the original song).
+       - Goal:
+         - If I pan to the LEFT channel in any player: I should hear a karaoke-like version (almost no vocal).
+         - If I pan to the RIGHT channel: I should hear the original-style song with full vocals.
+       - Export this KTV-style audio to a stereo file used later for final mp3/mp4.
+
+   (6) Generate KTV subtitles synchronized with the singing
+       - Very important requirement:
+         - The subtitles must follow the **actual singing timing**, not just show text.
+       - Use the singer’s original voice (the vocal track) as input to a speech-to-text model (e.g., Whisper) to:
+         - Transcribe the lyrics.
+         - Get accurate timestamps that match when each line is actually sung.
+       - Based on the timestamps, generate **karaoke-style subtitles**:
+         - At minimum: line-by-line highlighting, where the current line being sung is highlighted (different color).
+         - Ideally: word-by-word (or syllable-by-syllable) highlighting like real KTV.
+       - Output format:
+         - Prefer `.ass` or `.lrc` if you want richer karaoke effects.
+         - `.ass` with karaoke tags (so the text color can gradually change over time) is great.
+         - Also acceptable: `.srt` for simpler timing, with the understanding that more advanced KTV effects are limited.
+       - The important part:
+         - The timings in the subtitle file must align with when the singer actually sings each line or word in the audio.
+
+   (7) Build final output according to chosen format
+       - If user chose `mp3`:
+         - Create a final `xxx_ktv.mp3` file using the KTV stereo mix (LEFT = instrumental, RIGHT = full vocal).
+         - Save the subtitle file in the same output folder as:
+           - `xxx_ktv.ass` or `xxx_ktv.srt` (or both if you like).
+       - If user chose `mp4`:
+         - Option A (simpler):
+           - Keep the original video (if available) and export an `xxx_ktv.mp4` that uses the KTV stereo audio track.
+           - Save subtitles as an external file: `xxx_ktv.ass` or `xxx_ktv.srt`.
+         - Option B (nicer but more work):
+           - Create a simple video (e.g., static background or basic motion background).
+           - Render the lyrics on the screen and animate them so that the currently sung word/line changes color in sync with the music.
+           - Export this as `xxx_ktv.mp4` (hard-coded karaoke video).
+         - In both cases:
+           - The audio inside the mp4 must preserve the stereo KTV structure (LEFT = instrumental, RIGHT = full vocal).
+
+3. At the end of processing, the program should:
+   - Ensure the output folder exists (create if necessary).
+   - Move or save the final files there.
+   - Print a clear summary, for example:
+     - `Output folder: <absolute_path>`
+     - `Audio/Video file: xxx_ktv.mp3` or `xxx_ktv.mp4`
+     - `Subtitle file: xxx_ktv.ass` (and/or `.srt`)
+   - Print any warnings (e.g., some words couldn’t be recognized) in a human-readable way.
+
+Tech stack and project structure
+--------------------------------
+- Use **Python 3**.
+- Use **FFmpeg** for audio/video extraction and conversion.
+- Use an open-source library for:
+  - **Vocal separation** (e.g., Spleeter, Demucs, etc.).
+  - **Speech-to-text** / transcription (e.g., Whisper).
+- No web framework is required. A clean **terminal-based** UI is enough for now, but design it so that:
+  - The processing pipeline is separated from the user interface.
+  - Later I can wrap it into a GUI (Tkinter, PyQt, Electron, etc.) or turn it into a desktop app.
+
+Suggested structure (example):
+- `main.py`           – Entry point, terminal-based UI.
+- `downloader.py`     – Download/obtain media from URL or local file.
+- `audio_processing.py` – FFmpeg calls, vocal separation, KTV stereo mix.
+- `subtitles.py`      – Speech-to-text, timestamp processing, subtitle file generation (.ass/.srt/.lrc).
+- `config.py` or `config.json` – Default settings (output folder, model choices, etc.).
+- `utils/`            – Any helper utilities.
+- `logs/`             – Log files.
+
+Configuration
+-------------
+- Provide a configuration mechanism:
+  - For example: `config.json` or `.env`.
+  - Settings:
+    - Default output folder (e.g., `./output`).
+    - Default models / quality settings for:
+      - Vocal separation.
+      - Speech-to-text.
+    - Whether to keep or delete temporary files.
+- If the user does not modify config, it should still run with sensible defaults.
+
+Logging & progress display
+--------------------------
+- Implement basic logging:
+  - Log file, e.g.: `logs/app.log`.
+  - Append a new entry for each run, including:
+    - Start time.
+    - Input source (URL or file path).
+    - Chosen options (format, output path).
+    - Progress steps.
+    - Any errors or exceptions with stack traces.
+- In the console, show clear progress messages, for example:
+  - `[1/7] Validating input…`
+  - `[2/7] Downloading or copying media…`
+  - `[3/7] Extracting audio…`
+  - `[4/7] Separating vocals…`
+  - `[5/7] Creating KTV stereo mix…`
+  - `[6/7] Transcribing lyrics and generating subtitles…`
+  - `[7/7] Creating final files and saving to output folder…`
+- If any step fails, show a friendly error message and log the full details.
+
+README and packaging
+--------------------
+Create a detailed `README.md` that explains:
+
+1. **Project overview**
+   - Describe that this is a “YouTube/local file → KTV-style mp3/mp4 + synced subtitles” tool.
+   - Explain:
+     - LEFT channel: mostly instrumental.
+     - RIGHT channel: full vocal.
+     - Subtitles follow the actual singing.
+
+2. **Dependencies**
+   - Python version.
+   - FFmpeg installation (how to install on typical systems).
+   - Libraries used:
+     - For vocal separation.
+     - For speech-to-text (e.g., Whisper).
+   - Any model files that need to be downloaded.
+
+3. **How to run in Replit**
+   - Any specific steps needed in the Replit environment.
+
+4. **How to run locally (very important)**
+   - How to create and activate a virtual environment.
+   - `pip install -r requirements.txt`
+   - How to ensure FFmpeg is installed and in PATH.
+   - Command to start the app, e.g.:
+     - `python main.py`
+
+5. **Configuration**
+   - How to change default output folder or other settings in `config.json` or `.env`.
+
+6. **Packaging into an executable (Windows example)**
+   - Use `PyInstaller` or similar.
+   - Example instructions:
+     - `pip install pyinstaller`
+     - `pyinstaller --onefile main.py`
+   - Explain that this will produce something like:
+     - `dist/ktv_converter.exe`
+   - Mention that I should then be able to:
+     - Double-click `ktv_converter.exe`.
+     - Input a URL or local file.
+     - Wait, and then get KTV output files in the configured output folder.
+
+Deliverables
+------------
+- A Python project that:
+  - Runs as a terminal application.
+  - Lets me choose:
+    - YouTube URL or local file.
+    - Output format (`mp3` or `mp4`).
+    - Output folder.
+  - Produces:
+    - A KTV-style stereo audio (LEFT = instrumental, RIGHT = full vocal).
+    - A subtitle file whose timing follows the actual singing, with karaoke-style highlighting support.
+    - An mp3 or mp4 file saved in the chosen output folder, plus the subtitle file.
+- Clean code with clear modular structure and comments.
+- A `README.md` with clear instructions for:
+  - Running in Replit.
+  - Running locally.
+  - Packaging into a desktop-style executable.
