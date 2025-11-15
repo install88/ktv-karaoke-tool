@@ -1,0 +1,18 @@
+{
+  "default_output_folder": "./output",
+  "temp_folder": "./temp",
+  "keep_temp_files": false,
+  "vocal_separation": {
+    "method": "demucs",
+    "model": "htdemucs"
+  },
+  "speech_to_text": {
+    "model": "base",
+    "language": "auto"
+  },
+  "subtitle_format": "ass",
+  "logging": {
+    "log_folder": "./logs",
+    "log_level": "INFO"
+  }
+}
