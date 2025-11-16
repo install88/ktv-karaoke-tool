@@ -5,13 +5,11 @@
 小工具說明：
 - 給一個 .ass（KTV 字幕檔）和一個 lyrics.txt（正確歌詞，每行一句）
 - 會用 lyrics.txt 的文字覆蓋 .ass 內真正「在唱的那一行」（含 \k）
-- 時間軸照舊，\k 會依新歌詞「平均切時間」，變成一個字一個字跑
+- 優先保留原本每個「字」的時間分佈：
+    * 先把原本 {\\kNN}區段拆成「每字一個時間」
+    * 如果新歌詞字數跟原本相同，就直接沿用這些 per-char durations
+- 如果字數對不上，才退回「整句平均切時間」
 - 不會動到 mp4 / mpg，只是產生一個新的 .ass
-
-使用方法（Windows 建議一行打完）：
-    python fix_ass_with_lyrics.py --ass "output/歌名_ktv.ass" --lyrics "output/lyrics.txt"
-或指定輸出檔名：
-    python fix_ass_with_lyrics.py --ass "output/歌名_ktv.ass" --lyrics "output/lyrics.txt" --out "output/歌名_ktv_fixed.ass"
 """
 
 import argparse
@@ -55,29 +53,102 @@ def extract_total_k(text: str, fallback_cs: int) -> int:
     return total if total > 0 else fallback_cs
 
 
-def build_kara_from_lyrics(new_line: str, total_cs: int) -> str:
+def parse_k_blocks(text: str):
     """
-    根據新的歌詞 new_line，把 total_cs 的時間
-    平均分給每個字，產出 {\\kNN}字 的字串。
+    把一行像這樣：
+        {\k139}我{\k56}第一{\k79}次{\k52}吻{\k75}你的{\k282}脸
+    解析成：
+        durations = [139, 56, 56, 79, 52, 75, 75, 75, 282]
+        chars     = ['我','第','一','次','吻','你','的','脸', ...]
+    規則：
+        - 每個 {\\kNN} 後面的一段文字，平分這個 NN 時間到每個字
+        - 若某段完全沒有字，就跳過那個 {\\kNN}
+    """
+    pattern = re.compile(r"\{\\k(\d+)\}")
+    matches = list(pattern.finditer(text))
+
+    durations = []
+    chars = []
+
+    if not matches:
+        return durations, chars
+
+    for i, m in enumerate(matches):
+        dur_cs = int(m.group(1))
+        start_content = m.end()
+        end_content = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        segment = text[start_content:end_content]
+
+        if not segment:
+            continue
+
+        seg_chars = list(segment)
+        n = len(seg_chars)
+        if n == 0:
+            continue
+
+        if n == 1:
+            durations.append(max(1, dur_cs))
+            chars.append(seg_chars[0])
+            continue
+
+        per = max(1, dur_cs // n)
+        used = per * (n - 1)
+        last = max(1, dur_cs - used)
+
+        for j, ch in enumerate(seg_chars):
+            d_cs = per if j < n - 1 else last
+            durations.append(d_cs)
+            chars.append(ch)
+
+    return durations, chars
+
+
+def build_kara_from_lyrics(new_line: str, orig_text: str, fallback_cs: int) -> str:
+    """
+    根據新的歌詞 new_line，產生 {\\kNN}字 字串。
+
+    優先邏輯：
+      1) 先看 orig_text 裡的 {\\kNN}：
+         - 用 parse_k_blocks() 拿到「每個字的時間」+「原本的字串」
+         - 若 new_line 的字數 == orig_chars 的字數：
+             -> 一一套用 durations[i] 到 new_chars[i]
+      2) 如果沒 {\\k} 或字數對不上：
+         - 用 fallback_cs（通常是整句的秒數轉成 centisecond）
+         - 平均切給每個字（保底作法）
     """
     new_line = new_line.strip()
     if not new_line:
         return ""
 
-    chars = list(new_line)
-    n = len(chars)
+    new_chars = list(new_line)
 
+    # 先試圖用原本的 {\\k} 分佈
+    durations, orig_chars = parse_k_blocks(orig_text)
+
+    if durations and len(orig_chars) == len(new_chars):
+        # 1:1 映射：保留原本每個字的時間
+        parts = []
+        for d_cs, ch in zip(durations, new_chars):
+            parts.append(f"{{\\k{max(1, d_cs)}}}{ch}")
+        return "".join(parts)
+
+    # 否則退回：整句平均切 total_cs
+    total_cs = sum(durations) if durations else fallback_cs
+    total_cs = max(1, total_cs)
+
+    n = len(new_chars)
     if n == 1:
-        return f"{{\\k{total_cs}}}{chars[0]}"
+        return f"{{\\k{total_cs}}}{new_chars[0]}"
 
     per = max(1, total_cs // n)
     used = per * (n - 1)
     last = max(1, total_cs - used)
 
     parts = []
-    for i, ch in enumerate(chars):
-        dur = per if i < n - 1 else last
-        parts.append(f"{{\\k{dur}}}{ch}")
+    for i, ch in enumerate(new_chars):
+        d_cs = per if i < n - 1 else last
+        parts.append(f"{{\\k{d_cs}}}{ch}")
     return "".join(parts)
 
 
@@ -191,8 +262,8 @@ def main():
         fallback_cs = seconds_to_centisecs(end_sec - start_sec)
         total_cs = extract_total_k(d["text"], fallback_cs)
 
-        # 重新做一份跑字
-        d["text"] = build_kara_from_lyrics(new_line, total_cs)
+        # 重新做一份跑字（優先保留原本分佈）
+        d["text"] = build_kara_from_lyrics(new_line, d["text"], total_cs)
 
     # 4) 把「預告行」也一起改文字（不帶 \k，只顯示整句）
     #    邏輯：預告行數量 ≈ 歌詞行數 - 1

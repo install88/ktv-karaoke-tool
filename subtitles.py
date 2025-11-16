@@ -120,6 +120,9 @@ class SubtitleGenerator:
         logger.info(f"SRT file created: {output_file}")
         return output_file
 
+    # ---------------------------------------------------------
+    # ASS 產生（KTV 兩句制 + 每字一個 \k）
+    # ---------------------------------------------------------
     def generate_ass(self, transcription: Dict, output_file: str) -> str:
         """
         產生 ASS 字幕（永遠只顯示兩句：當前一句 + 下一句）
@@ -175,30 +178,46 @@ Style: NextRight,Arial,48,&H00FFFFFF,&H00FFFFFF,&H00000000,&H64000000,-1,0,0,0,1
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
 
-        # 之後如果要自己調位置，就改上面四個 Style 的 MarginL/MarginR/MarginV
+        def build_karaoke_text(words, fallback_text: str, start: float, end: float) -> str:
+            """
+            把 Whisper 的 words 轉成帶 \\k 的卡拉 OK 文字。
+            - 一個 word 的時間 = (w["end"] - w["start"])
+            - 如果 word 裡有多個字，就把這段時間平均拆給每個字
+            - 如果沒有 words，就用整句時間平均拆給每個字
+            """
+            # 1) 有 word_timestamps：用 word 的時間
+            if words:
+                parts = []
+                for w in words:
+                    text = w.get("word", "")
+                    if not text:
+                        continue
 
-        def build_karaoke_text(words, fallback_text: str) -> str:
-            """
-            把一整句變成「一個字一個 \\k」，並且：
-            - 總時間 = 原本 words 裡所有 (end-start) 加總
-            - 若沒有 words，就用固定速度（每字 30cs）當作退路
-            """
+                    dur_cs = max(1, int((w["end"] - w["start"]) * 100))  # 秒 → centisecond
+                    chars = list(text)
+                    n = len(chars)
+                    if n == 0:
+                        continue
+                    if n == 1:
+                        parts.append(f"{{\\k{dur_cs}}}{chars[0]}")
+                        continue
+
+                    per = max(1, dur_cs // n)
+                    used = per * (n - 1)
+                    last = max(1, dur_cs - used)
+
+                    for i, ch in enumerate(chars):
+                        d_cs = per if i < n - 1 else last
+                        parts.append(f"{{\\k{d_cs}}}{ch}")
+                if parts:
+                    return "".join(parts)
+
+            # 2) 沒有 word_timestamps：用整句時間平均拆給 fallback_text
             text = fallback_text.strip()
             if not text:
                 return ""
 
-            # 1) 算這一句的總長度（centisecond）
-            total_cs = 0
-            if words:
-                for w in words:
-                    dur_cs = max(1, int((w["end"] - w["start"]) * 100))
-                    total_cs += dur_cs
-
-            # 如果沒有 word 時間（或總長度是 0），給一個簡單預設
-            if total_cs <= 0:
-                total_cs = 30 * len(text)  # 假設每個字 0.3 秒
-
-            # 2) 依照「字數」平均切時間
+            total_cs = max(1, int(round((end - start) * 100)))
             chars = list(text)
             n = len(chars)
             if n == 1:
@@ -210,8 +229,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
             parts = []
             for i, ch in enumerate(chars):
-                dur = per if i < n - 1 else last
-                parts.append(f"{{\\k{dur}}}{ch}")
+                d_cs = per if i < n - 1 else last
+                parts.append(f"{{\\k{d_cs}}}{ch}")
             return "".join(parts)
 
         with open(output_file, "w", encoding="utf-8") as f:
@@ -233,7 +252,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 start_str = self.format_timestamp_ass(start)
                 end_str = self.format_timestamp_ass(end)
 
-                kara_text = build_karaoke_text(words, text)
+                kara_text = build_karaoke_text(words, text, start, end)
 
                 # 這個事件負責「正在唱」時的白→藍跑格效果
                 f.write(
