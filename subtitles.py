@@ -179,16 +179,39 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
         def build_karaoke_text(words, fallback_text: str) -> str:
             """
-            把 Whisper 的 words 轉成帶 \\k 的卡拉 OK 文字。
-            如果沒有 words，就直接用整句文字。
+            把一整句變成「一個字一個 \\k」，並且：
+            - 總時間 = 原本 words 裡所有 (end-start) 加總
+            - 若沒有 words，就用固定速度（每字 30cs）當作退路
             """
-            if not words:
-                return fallback_text
+            text = fallback_text.strip()
+            if not text:
+                return ""
+
+            # 1) 算這一句的總長度（centisecond）
+            total_cs = 0
+            if words:
+                for w in words:
+                    dur_cs = max(1, int((w["end"] - w["start"]) * 100))
+                    total_cs += dur_cs
+
+            # 如果沒有 word 時間（或總長度是 0），給一個簡單預設
+            if total_cs <= 0:
+                total_cs = 30 * len(text)  # 假設每個字 0.3 秒
+
+            # 2) 依照「字數」平均切時間
+            chars = list(text)
+            n = len(chars)
+            if n == 1:
+                return f"{{\\k{total_cs}}}{chars[0]}"
+
+            per = max(1, total_cs // n)
+            used = per * (n - 1)
+            last = max(1, total_cs - used)
 
             parts = []
-            for w in words:
-                dur_cs = max(1, int((w["end"] - w["start"]) * 100))  # 秒 → centisecond
-                parts.append(f"{{\\k{dur_cs}}}{w['word']}")
+            for i, ch in enumerate(chars):
+                dur = per if i < n - 1 else last
+                parts.append(f"{{\\k{dur}}}{ch}")
             return "".join(parts)
 
         with open(output_file, "w", encoding="utf-8") as f:
@@ -216,6 +239,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 f.write(
                     f"Dialogue: 0,{start_str},{end_str},{style},,0,0,0,,{kara_text}\n"
                 )
+
             # ===== 2. 下一句的「預告」事件（純白，不跑格，時間不中斷） =====
             for i in range(len(segments) - 1):
                 curr_seg = segments[i]       # 第 i 句（正在唱）
@@ -241,9 +265,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
         logger.info(f"ASS file created (current + next line, fixed colors): {output_file}")
         return output_file
-
-
-
 
     # ---------------------------------------------------------
     # 封裝：對外只呼叫這個產生字幕
