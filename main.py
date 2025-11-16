@@ -48,6 +48,7 @@ def clean_youtube_url(raw_url: str) -> str:
     # https://www.youtube.com/watch?v=VIDEO_ID
     return f"https://www.youtube.com/watch?v={video_id}"
 
+
 def setup_logging(log_folder: str = "./logs", log_level: str = "INFO") -> None:
     log_path = Path(log_folder)
     log_path.mkdir(parents=True, exist_ok=True)
@@ -91,17 +92,7 @@ def print_banner():
 
 
 def get_user_input():
-    # print("Select input type:")
-    # print("  1) YouTube URL")
-    # print("  2) Local file path")
-    
-    # while True:
-    #     choice = input("\nEnter choice (1 or 2): ").strip()
-    #     if choice in ['1', '2']:
-    #         break
-    #     print("Invalid choice. Please enter 1 or 2.")
-    
-    # input_type = "url" if choice == '1' else "local"
+    # 目前只支援 YouTube URL，自動清洗成乾淨的 watch?v=xxx
     input_type = "url"
     
     if input_type == "url":
@@ -110,22 +101,9 @@ def get_user_input():
     else:
         input_value = input("\nEnter local file path: ").strip()
     
-    # print("\nSelect output format:")
-    # print("  1) MP3 (audio only)")
-    # print("  2) MP4 (video)")
-    
-    # while True:
-    #     format_choice = input("\nEnter choice (1 or 2): ").strip()
-    #     if format_choice in ['1', '2']:
-    #         break
-    #     print("Invalid choice. Please enter 1 or 2.")
-    
-    # output_format = "mp3" if format_choice == '1' else "mp4"
+    # 輸出格式固定 MP4
     output_format = "mp4"
-    
-    # output_folder = input("\nEnter output folder (press Enter for default './output'): ").strip()
-    # if not output_folder:
-    #     output_folder = "./output"
+    # 輸出資料夾固定 ./output
     output_folder = "./output"
     
     print("\n" + "-"*60)
@@ -135,11 +113,6 @@ def get_user_input():
     print(f"  Output format: {output_format}")
     print(f"  Output folder: {output_folder}")
     print("-"*60 + "\n")
-    
-    # confirm = input("Proceed? (y/n): ").strip().lower()
-    # if confirm != 'y':
-    #     print("Operation cancelled.")
-    #     sys.exit(0)
     
     return input_type, input_value, output_format, output_folder
 
@@ -166,24 +139,24 @@ def main():
         temp_folder = config['temp_folder']
         Path(temp_folder).mkdir(parents=True, exist_ok=True)
         
-        print("\n[1/8] Validating input...")
+        print("\n[1/7] Validating input...")
         logger.info("Step 1: Validating input")
         
         downloader = MediaDownloader(temp_folder)
         
-        print("[2/8] Downloading or copying media...")
+        print("[2/7] Downloading or copying media...")
         logger.info("Step 2: Getting media")
         media_file, title = downloader.get_media(input_type, input_value)
         print(f"  ✓ Media ready: {Path(media_file).name}")
         
         processor = AudioProcessor(temp_folder)
         
-        print("[3/8] Extracting audio...")
+        print("[3/7] Extracting audio...")
         logger.info("Step 3: Extracting audio")
         audio_file = processor.extract_audio(media_file)
         print(f"  ✓ Audio extracted")
         
-        print("[4/8] Separating vocals (this may take a few minutes)...")
+        print("[4/7] Separating vocals (this may take a few minutes)...")
         logger.info("Step 4: Separating vocals")
         vocals_file, instrumental_file = processor.separate_vocals(
             audio_file,
@@ -191,7 +164,7 @@ def main():
         )
         print(f"  ✓ Vocals separated")
         
-        print("[5/8] Creating KTV stereo mix...")
+        print("[5/7] Creating KTV stereo mix...")
         logger.info("Step 5: Creating KTV stereo mix")
         ktv_mix_file = Path(temp_folder) / f"{title}_ktv_mix.wav"
         processor.create_ktv_stereo_mix(
@@ -201,7 +174,7 @@ def main():
         )
         print(f"  ✓ KTV stereo mix created")
         
-        print("[6/8] Transcribing lyrics and generating subtitles (this may take a few minutes)...")
+        print("[6/7] Transcribing lyrics and generating subtitles (this may take a few minutes)...")
         logger.info("Step 6: Generating subtitles")
         subtitle_gen = SubtitleGenerator(
             model_size=config['speech_to_text']['model']
@@ -212,15 +185,20 @@ def main():
             str(vocals_file),
             str(subtitle_base),
             format_type=config['subtitle_format'],
-            language=config['speech_to_text']['language'] if config['speech_to_text']['language'] != 'auto' else None
+            language=(
+                config['speech_to_text']['language']
+                if config['speech_to_text']['language'] != 'auto'
+                else None
+            )
         )
         print(f"  ✓ Subtitles generated")
         
-        print("[7/8] Creating final files and saving to output folder...")
-        logger.info("Step 7: Creating final output files")
+        print("[7/7] Creating final MP4 (KTV audio, no burned subtitles)...")
+        logger.info("Step 7: Creating final MP4 (audio only, no burned subtitles)")
         
         try:
             if output_format == "mp3":
+                # 理論上現在不會走這裡，但保留一下
                 final_output = output_path / f"{title}_ktv.mp3"
                 processor.convert_to_mp3(str(ktv_mix_file), str(final_output))
             else:
@@ -237,66 +215,32 @@ def main():
                         logger.warning(f"Video source file not found: {video_source}")
                         video_source = None
 
-                # 2) 從 subtitle_files 裡找出 ASS 檔（如果你只產 ass 就會只有一個）
-                ass_file = None
-                for sf in subtitle_files:
-                    if sf.lower().endswith(".ass"):
-                        ass_file = sf
-                        break
-
-                # 3) 如果有 ASS，就用「燒字幕版」；沒有就退回舊的
-                if ass_file:
-                    processor.create_video_with_audio_and_subtitles(
-                        video_source,
-                        str(ktv_mix_file),
-                        ass_file,
-                        str(final_output),
-                    )
-                else:
-                    logger.warning("No ASS subtitle file found, creating video without burned subtitles.")
-                    processor.create_video_with_audio(
-                        video_source,
-                        str(ktv_mix_file),
-                        str(final_output),
-                    )
-            
-            print(f"  ✓ Final file created")
-
-            # ========== [8/8] 由 MP4 + ASS 產生 MPG（硬燒字幕） ==========
-            if output_format == "mp4" and subtitle_files:
-                print("[8/8] Creating MPG with burned-in subtitles for DVD players...")
-                logger.info("Step 8: Creating MPG with burned subtitles")
-
-                # 先拿第一個字幕檔（通常就是 .ass）
-                subtitle_file = subtitle_files[0]
-                dvd_output = output_path / f"{title}_ktv_dvd.mpg"
-
-                processor.create_mpg_with_subtitles(
-                    video_file=str(final_output),        # 剛做好的 xxx_ktv.mp4
-                    subtitle_file=str(subtitle_file),    # xxx_ktv.ass
-                    output_file=str(dvd_output),
+                # 2) 只把新 KTV 音軌塞回影片，不燒字幕
+                processor.create_video_with_audio(
+                    video_source,
+                    str(ktv_mix_file),
+                    str(final_output),
                 )
-
-                print(f"  ✓ DVD MPG file created: {dvd_output.name}")
-            elif output_format == "mp4" and not subtitle_files:
-                logger.warning("No subtitles found; skip MPG DVD creation.")            
+            
+            print(f"  ✓ Final MP4 created")
             
         except Exception as e:
             logger.error(f"Error creating final output: {e}")
             raise
         finally:
             if not config.get('keep_temp_files', False):
-                logger.info("Cleaning up temporary files")
+                logger.info("Cleaning up temporary files (you can comment this out if you want to keep temp)")
+                # 你如果希望永遠保留 temp，就把下面兩行打開 / 關掉依需求
                 # try:
                 #     downloader.cleanup()
                 # except Exception as cleanup_error:
                 #     logger.warning(f"Error during cleanup: {cleanup_error}")
         
         print("\n" + "="*60)
-        print("  Processing Complete!")
+        print("  Processing Complete!  (Steps 1–7 done, no MPG/DVD)")
         print("="*60)
         print(f"\nOutput folder: {output_path.absolute()}")
-        print(f"Audio/Video file: {final_output.name}")
+        print(f"KTV MP4 file: {final_output.name}")
         for subtitle_file in subtitle_files:
             print(f"Subtitle file: {Path(subtitle_file).name}")
         
@@ -306,7 +250,7 @@ def main():
         print("\nTip: Use a media player's balance control to switch between modes!")
         print("="*60 + "\n")
         
-        logger.info("KTV conversion completed successfully")
+        logger.info("KTV conversion completed successfully (up to step 7)")
         
     except KeyboardInterrupt:
         print("\n\nOperation cancelled by user.")

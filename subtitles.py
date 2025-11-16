@@ -128,15 +128,8 @@ class SubtitleGenerator:
           - 左邊：奇數句（index 0,2,4,...），高度較高，靠中間一點
           - 右邊：偶數句（index 1,3,5,...），高度較低，靠中間一點
         顏色：
-          - 未唱：白色
-          - 已唱：藍色跑格（卡拉 OK 效果）
-
-        時間軸：
-          - 唱第 i 句時畫面上出現：
-                第 i 句：有 \\k 的卡拉 OK（藍字跑格）
-                第 i+1 句：純白文字，預告下一句
-          - 下一句會從「第 i 句開始唱」一路顯示到「第 i+1 句開始唱」，
-            中間不會有整個字幕都消失的空檔。
+          - 正在唱：未唱 = 白色，已唱 = 藍色（卡拉 OK 效果）
+          - 下一句預告：整句 = 白色
         """
         logger.info(f"Generating ASS subtitles (left/right current + next line): {output_file}")
 
@@ -148,21 +141,17 @@ class SubtitleGenerator:
             return output_file
 
         # ---------- 樣式定義 ----------
-        # 顏色說明（BGR 格式）：
-        #   &H00FFFFFF = 白色
-        #   &H00FF0000 = 純藍
+        # 顏色說明（BGR）：
+        #   &H00FFFFFF = 白
+        #   &H00FF0000 = 藍
         #
-        # !!!重點!!!
-        # 在大多數播放器裡：
-        #   PrimaryColour   = 「未唱 / 背景」顏色
-        #   SecondaryColour = 「已唱 / 跑格」顏色
+        # Karaoke (\k) 的規則：
+        #   - 沒有 \k 的字幕：用 PrimaryColour
+        #   - 有 \k 的字幕：未唱部分 = SecondaryColour，已唱部分 = PrimaryColour
         #
         # 所以：
-        #   PrimaryColour   設成白色
-        #   SecondaryColour 設成藍色
-        #
-        # 如果你在 VLC / KMPlayer 看起來相反，
-        # 就把下面兩個顏色互換即可。
+        #   - Sing*：Primary = 藍、Secondary = 白（白底 → 唱到變藍）
+        #   - Next*：Primary = 白、Secondary = 白（整句預告白字）
         ass_header = """[Script Info]
 Title: KTV Karaoke Subtitles
 ScriptType: v4.00+
@@ -173,23 +162,20 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-; 左邊句子（奇數句）：比較高、靠近中間
-;  PrimaryColour   = 白（未唱）
-;  SecondaryColour = 藍（已唱）
-Style: LeftLine,Arial,48,&H00FFFFFF,&H00FF0000,&H00000000,&H64000000,-1,0,0,0,100,100,0,0,1,3,0,1,260,10,90,1
-; 右邊句子（偶數句）：比較低、靠近中間
-Style: RightLine,Arial,48,&H00FFFFFF,&H00FF0000,&H00000000,&H64000000,-1,0,0,0,100,100,0,0,1,3,0,3,260,260,50,1
+; 正在唱：左邊（奇數句）
+Style: SingLeft,Arial,48,&H00FF0000,&H00FFFFFF,&H00000000,&H64000000,-1,0,0,0,100,100,0,0,1,3,0,1,260,10,90,1
+; 正在唱：右邊（偶數句）
+Style: SingRight,Arial,48,&H00FF0000,&H00FFFFFF,&H00000000,&H64000000,-1,0,0,0,100,100,0,0,1,3,0,3,260,260,50,1
+; 下一句預告：左邊（全白）
+Style: NextLeft,Arial,48,&H00FFFFFF,&H00FFFFFF,&H00000000,&H64000000,-1,0,0,0,100,100,0,0,1,3,0,1,260,10,90,1
+; 下一句預告：右邊（全白）
+Style: NextRight,Arial,48,&H00FFFFFF,&H00FFFFFF,&H00000000,&H64000000,-1,0,0,0,100,100,0,0,1,3,0,3,260,260,50,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
 
-        # 你之後如果要自己調位置，就改上面這兩行：
-        # - 高度：MarginV
-        #   LeftLine 的 MarginV=90  (比較大 → 比較高)
-        #   RightLine 的 MarginV=50 (比較小 → 靠近底部)
-        # - 靠中程度：MarginL / MarginR
-        #   數字越大 → 離螢幕邊越遠 → 越靠中間
+        # 之後如果要自己調位置，就改上面四個 Style 的 MarginL/MarginR/MarginV
 
         def build_karaoke_text(words, fallback_text: str) -> str:
             """
@@ -215,45 +201,47 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 text = seg["text"].strip()
                 words = seg.get("words", [])
 
-                style = "LeftLine" if (idx % 2 == 0) else "RightLine"
+                # 過濾掉空句或時間為 0 的奇怪 segment
+                if not text or end <= start:
+                    continue
+
+                style = "SingLeft" if (idx % 2 == 0) else "SingRight"
 
                 start_str = self.format_timestamp_ass(start)
                 end_str = self.format_timestamp_ass(end)
 
                 kara_text = build_karaoke_text(words, text)
 
-                # 這個事件負責「正在唱」時的藍色跑格效果
+                # 這個事件負責「正在唱」時的白→藍跑格效果
                 f.write(
                     f"Dialogue: 0,{start_str},{end_str},{style},,0,0,0,,{kara_text}\n"
                 )
-
             # ===== 2. 下一句的「預告」事件（純白，不跑格，時間不中斷） =====
-            # 唱第 i 句時，要看到第 i+1 句，並且從第 i 句開始唱
-            # 一直到第 i+1 句開始唱為止，中間都不要空白。
             for i in range(len(segments) - 1):
                 curr_seg = segments[i]       # 第 i 句（正在唱）
                 next_seg = segments[i + 1]   # 第 i+1 句（預告）
 
                 preview_start = curr_seg["start"]
-                # 讓預告一直顯示到「下一句開始唱」，不中斷
                 preview_end = max(curr_seg["end"], next_seg["start"])
 
-                if preview_end <= preview_start:
+                text = next_seg["text"].strip()
+                if not text or preview_end <= preview_start:
                     continue
 
-                style_next = "LeftLine" if ((i + 1) % 2 == 0) else "RightLine"
+                # 下一句的位置依照「下一句 index 的奇偶」決定左右
+                style_next = "NextLeft" if ((i + 1) % 2 == 0) else "NextRight"
 
                 start_str = self.format_timestamp_ass(preview_start)
                 end_str = self.format_timestamp_ass(preview_end)
-                text = next_seg["text"].strip()
 
-                # ★這裡故意不用 \\k，整句維持 PrimaryColour（白色），當作「下一句預告」
+                # ★不要加 \\k，整句維持 PrimaryColour（白色）當作預告
                 f.write(
                     f"Dialogue: 0,{start_str},{end_str},{style_next},,0,0,0,,{text}\n"
                 )
 
-        logger.info(f"ASS file created (left/right current + next line, no gaps): {output_file}")
+        logger.info(f"ASS file created (current + next line, fixed colors): {output_file}")
         return output_file
+
 
 
 
