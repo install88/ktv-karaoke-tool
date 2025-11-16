@@ -106,10 +106,25 @@ class SubtitleGenerator:
         return output_file
 
     def generate_ass(self, transcription: Dict, output_file: str) -> str:
-        logger.info(f"Generating ASS subtitles with karaoke effects: {output_file}")
-        
+        """
+        產生 ASS 卡拉 OK 字幕（永遠顯示：當前一句 + 下一句）
+
+        時間軸邏輯：
+          - 第 i 句在唱：顯示
+                SingLine：第 i 句（藍色、有 \\k）
+                NextLine：第 i+1 句（白色）
+          - 第 i 句當「下一句」顯示的時間 = 第 i-1 句在唱的時間
+        """
+        logger.info(f"Generating ASS subtitles (current + next line): {output_file}")
+
         segments = transcription.get("segments", [])
-        
+        if not segments:
+            logger.warning("No segments found in transcription, skipping ASS generation.")
+            with open(output_file, "w", encoding="utf-8") as f:
+                f.write("")
+            return output_file
+
+        # ---------- 樣式定義：上行 = 下一句、下行 = 正在唱 ----------
         ass_header = """[Script Info]
 Title: KTV Karaoke Subtitles
 ScriptType: v4.00+
@@ -120,36 +135,76 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,Arial,48,&H00FFFFFF,&H000088FF,&H00000000,&H00666666,-1,0,0,0,100,100,0,0,1,2,0,2,10,10,10,1
-Style: Karaoke,Arial,48,&H0000FFFF,&H00FF00FF,&H00000000,&H00666666,-1,0,0,0,100,100,0,0,1,2,0,2,10,10,10,1
+; 上面那行：下一句（白色，不變色）
+Style: NextLine,Arial,48,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,2,0,2,10,10,80,1
+; 下面那行：正在唱的句子（未唱白、已唱藍）
+Style: SingLine,Arial,48,&H00FFFFFF,&H0000FF00,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,3,0,2,10,10,40,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
-        
-        with open(output_file, 'w', encoding='utf-8') as f:
+
+        def build_karaoke_text(words, fallback_text: str) -> str:
+            """
+            把 Whisper 的 words 轉成帶 \\k 的卡拉 OK 文字。
+            如果沒 words，就直接用整句文字。
+            """
+            if not words:
+                return fallback_text
+
+            parts = []
+            for w in words:
+                dur_cs = max(1, int((w["end"] - w["start"]) * 100))  # 轉成 centisecond
+                parts.append(f"{{\\k{dur_cs}}}{w['word']}")
+            return "".join(parts)
+
+        with open(output_file, "w", encoding="utf-8") as f:
             f.write(ass_header)
-            
-            for segment in segments:
-                start = self.format_timestamp_ass(segment['start'])
-                end = self.format_timestamp_ass(segment['end'])
-                text = segment['text'].strip()
-                
-                words = segment.get('words', [])
-                
-                if words and len(words) > 1:
-                    karaoke_text = ""
-                    for i, word in enumerate(words):
-                        word_start = word['start'] - segment['start']
-                        word_duration = (word['end'] - word['start']) * 100
-                        karaoke_text += f"{{\\k{int(word_duration)}}}{word['word']}"
-                    
-                    f.write(f"Dialogue: 0,{start},{end},Karaoke,,0,0,0,,{karaoke_text}\n")
-                else:
-                    f.write(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{text}\n")
-        
-        logger.info(f"ASS file created with karaoke effects: {output_file}")
+
+            # ===== 1. 為每一句建立「正在唱」的 SingLine 事件 =====
+            for seg in segments:
+                start = seg["start"]
+                end = seg["end"]
+                text = seg["text"].strip()
+                words = seg.get("words", [])
+
+                start_str = self.format_timestamp_ass(start)
+                end_str = self.format_timestamp_ass(end)
+
+                kara_text = build_karaoke_text(words, text)
+
+                # 下行：當前正在唱的句子（白→藍）
+                f.write(
+                    f"Dialogue: 0,{start_str},{end_str},SingLine,,0,0,0,,{kara_text}\n"
+                )
+
+            # ===== 2. 為每一句建立「當下一句」時期的 NextLine 事件 =====
+            # 第 0 句前面沒有「上一句」，所以「被當成下一句」的時段只有從第 0 句開始往後。
+            for i in range(1, len(segments)):
+                prev_seg = segments[i - 1]   # 前一句
+                seg = segments[i]            # 這一句，當「下一句」顯示時
+
+                # 顯示時間：整個「前一句在唱」的時間
+                next_start = prev_seg["start"]
+                next_end = prev_seg["end"]
+
+                # 如果時間不合理就跳過
+                if next_end <= next_start:
+                    continue
+
+                start_str = self.format_timestamp_ass(next_start)
+                end_str = self.format_timestamp_ass(next_end)
+
+                text = seg["text"].strip()
+
+                # 上行：下一句，純白字，不做 \\k 動畫
+                f.write(
+                    f"Dialogue: 0,{start_str},{end_str},NextLine,,0,0,0,,{text}\n"
+                )
+
+        logger.info(f"ASS file created (current + next line): {output_file}")
         return output_file
+
 
     def generate_subtitles(
         self,

@@ -7,7 +7,7 @@
     "model": "htdemucs"
   },
   "speech_to_text": {
-    "model": "base",
+    "model": "small",
     "language": "zh"
   },
   "subtitle_format": "ass",
