@@ -41,6 +41,68 @@ class AudioProcessor:
         self.temp_folder = Path(temp_folder)
         self.temp_folder.mkdir(parents=True, exist_ok=True)
 
+    def _build_ffmpeg_subtitle_filter(self, subtitle_file: str) -> str:
+        """
+        把 Windows 路徑轉成 ffmpeg subtitles 濾鏡可用格式。
+        例如：
+          C:\\Users\\insta\\...\\foo.ass
+        變成：
+          filename='C\\:/Users/insta/.../foo.ass'
+        """
+        p = Path(subtitle_file).absolute()
+        s = str(p).replace("\\", "/")   # 變成 / 路徑
+        s = s.replace(":", r"\:")       # C: → C\:
+        return f"subtitles=filename='{s}'"
+
+    def create_mpg_with_subtitles(
+        self,
+        video_file: str,
+        subtitle_file: str,
+        output_file: str,
+    ) -> None:
+        """
+        將「已有的 MP4」+「ASS 字幕」轉成 DVD 播放機比較友善的 MPG：
+          - 視訊：MPEG-2
+          - 音訊：MP2
+          - 字幕：硬燒進畫面（KTV 店用）
+        """
+
+        logger = logging.getLogger(__name__)
+
+        # 準備 ffmpeg 指令
+        sub_filter = self._build_ffmpeg_subtitle_filter(subtitle_file)
+
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", str(video_file),           # 輸入：你第 7 步做好的 _ktv.mp4
+            "-vf", sub_filter,               # 硬燒 ASS 字幕
+            "-c:v", "mpeg2video",            # DVD 常用的 MPEG-2 視訊
+            "-q:v", "2",                     # 畫質（2 算滿不錯，數字越小越好）
+            "-c:a", "mp2",                   # MP2 音訊
+            "-ar", "48000",                  # 48kHz
+            "-b:a", "192k",                  # 192 kbps
+            "-aspect", "16:9",               # 大多數 MV 都是 16:9
+            str(output_file),
+        ]
+
+        logger.info("Running ffmpeg (MPG with subtitles): %s", " ".join(cmd))
+
+        result = subprocess.run(cmd, capture_output=True, text=True)
+
+        if result.returncode != 0:
+            logger.error(
+                "ffmpeg (mpg) failed:\nSTDOUT:\n%s\nSTDERR:\n%s",
+                result.stdout,
+                result.stderr,
+            )
+            raise RuntimeError(
+                f"ffmpeg failed when creating MPG with subtitles.\n"
+                f"STDOUT:\n{result.stdout}\n\nSTDERR:\n{result.stderr}"
+            )
+
+        logger.info("MPG file with burned subtitles created: %s", output_file)           
+
+
     def extract_audio(self, input_file: str, output_format: str = "wav") -> str:
         logger.info(f"Extracting audio from: {input_file}")
         
@@ -281,3 +343,66 @@ class AudioProcessor:
         except subprocess.CalledProcessError as e:
             logger.error(f"FFmpeg error: {e.stderr}")
             raise
+
+    def create_video_with_audio_and_subtitles(
+        self,
+        original_video: Optional[str],
+        ktv_audio: str,
+        ass_subtitle: Optional[str],
+        output_file: str,
+    ) -> str:
+        """
+        建立「已內嵌 ASS 字幕」的 MP4。
+        - original_video：原始 MV 檔（有畫面）
+        - ktv_audio：你混好、左右聲道不同內容的 KTV 音訊
+        - ass_subtitle：ASS 字幕（含顏色 / \k 效果）
+        - output_file：輸出的 mp4
+
+        注意：因為加了 -vf subtitles，要重新編碼影片，無法用 -c:v copy。
+        """
+        logger.info(f"Creating MP4 with KTV audio + hardcoded ASS subtitles: {output_file}")
+
+        # 沒有原始影片的情況，就退回用原本的 create_video_with_audio
+        if not original_video or not Path(original_video).exists():
+            logger.warning("Original video not found, falling back to audio-only video creation.")
+            return self.create_video_with_audio(None, ktv_audio, output_file)
+
+        # 如果沒給字幕檔，一樣退回舊方法
+        if not ass_subtitle or not Path(ass_subtitle).exists():
+            logger.warning("ASS subtitle file not found, falling back to video without burned subtitles.")
+            return self.create_video_with_audio(original_video, ktv_audio, output_file)
+
+        # Windows / ffmpeg 的 subtitles 濾鏡對路徑很機車，保守一點把路徑處理一下
+        ass_path = Path(ass_subtitle).resolve()
+        # 換成正斜線，並把 : escape 掉，避免 C:\ 之類出問題
+        ass_for_filter = str(ass_path).replace("\\", "/").replace(":", r"\:")
+
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-i", str(original_video),
+            "-i", str(ktv_audio),
+            # 字幕濾鏡：這一步會把 ASS 字幕「燒進」影片畫面
+            "-vf", f"subtitles={ass_for_filter}",
+            # 影片要重新編碼（不能再 copy）
+            "-c:v", "libx264",
+            "-preset", "veryfast",
+            "-crf", "18",          # 品質可自行調整（數字越大品質越差、檔案越小）
+            # 音訊用 AAC
+            "-c:a", "aac",
+            "-b:a", "320k",
+            "-map", "0:v:0",
+            "-map", "1:a:0",
+            "-shortest",
+            str(output_file),
+        ]
+
+        try:
+            import subprocess
+            result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+            logger.debug(f"ffmpeg stdout:\n{result.stdout}")
+            logger.info(f"MP4 with hardcoded subtitles created: {output_file}")
+            return str(output_file)
+        except subprocess.CalledProcessError as e:
+            logger.error(f"FFmpeg error while burning subtitles:\nSTDOUT:\n{e.stdout}\nSTDERR:\n{e.stderr}")
+            raise            

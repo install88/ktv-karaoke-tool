@@ -166,24 +166,24 @@ def main():
         temp_folder = config['temp_folder']
         Path(temp_folder).mkdir(parents=True, exist_ok=True)
         
-        print("\n[1/7] Validating input...")
+        print("\n[1/8] Validating input...")
         logger.info("Step 1: Validating input")
         
         downloader = MediaDownloader(temp_folder)
         
-        print("[2/7] Downloading or copying media...")
+        print("[2/8] Downloading or copying media...")
         logger.info("Step 2: Getting media")
         media_file, title = downloader.get_media(input_type, input_value)
         print(f"  ✓ Media ready: {Path(media_file).name}")
         
         processor = AudioProcessor(temp_folder)
         
-        print("[3/7] Extracting audio...")
+        print("[3/8] Extracting audio...")
         logger.info("Step 3: Extracting audio")
         audio_file = processor.extract_audio(media_file)
         print(f"  ✓ Audio extracted")
         
-        print("[4/7] Separating vocals (this may take a few minutes)...")
+        print("[4/8] Separating vocals (this may take a few minutes)...")
         logger.info("Step 4: Separating vocals")
         vocals_file, instrumental_file = processor.separate_vocals(
             audio_file,
@@ -191,7 +191,7 @@ def main():
         )
         print(f"  ✓ Vocals separated")
         
-        print("[5/7] Creating KTV stereo mix...")
+        print("[5/8] Creating KTV stereo mix...")
         logger.info("Step 5: Creating KTV stereo mix")
         ktv_mix_file = Path(temp_folder) / f"{title}_ktv_mix.wav"
         processor.create_ktv_stereo_mix(
@@ -201,7 +201,7 @@ def main():
         )
         print(f"  ✓ KTV stereo mix created")
         
-        print("[6/7] Transcribing lyrics and generating subtitles (this may take a few minutes)...")
+        print("[6/8] Transcribing lyrics and generating subtitles (this may take a few minutes)...")
         logger.info("Step 6: Generating subtitles")
         subtitle_gen = SubtitleGenerator(
             model_size=config['speech_to_text']['model']
@@ -216,7 +216,7 @@ def main():
         )
         print(f"  ✓ Subtitles generated")
         
-        print("[7/7] Creating final files and saving to output folder...")
+        print("[7/8] Creating final files and saving to output folder...")
         logger.info("Step 7: Creating final output files")
         
         try:
@@ -225,20 +225,61 @@ def main():
                 processor.convert_to_mp3(str(ktv_mix_file), str(final_output))
             else:
                 final_output = output_path / f"{title}_ktv.mp4"
+
+                # 1) 判斷有沒有原始 MV 可以拿來當畫面
                 video_source = None
-                if input_type == "url" or (input_type == "local" and Path(input_value).suffix.lower() in ['.mp4', '.avi', '.mkv', '.mov', '.flv']):
+                if input_type == "url" or (
+                    input_type == "local"
+                    and Path(input_value).suffix.lower() in ['.mp4', '.avi', '.mkv', '.mov', '.flv']
+                ):
                     video_source = media_file
                     if not Path(video_source).exists():
                         logger.warning(f"Video source file not found: {video_source}")
                         video_source = None
-                
-                processor.create_video_with_audio(
-                    video_source,
-                    str(ktv_mix_file),
-                    str(final_output)
-                )
+
+                # 2) 從 subtitle_files 裡找出 ASS 檔（如果你只產 ass 就會只有一個）
+                ass_file = None
+                for sf in subtitle_files:
+                    if sf.lower().endswith(".ass"):
+                        ass_file = sf
+                        break
+
+                # 3) 如果有 ASS，就用「燒字幕版」；沒有就退回舊的
+                if ass_file:
+                    processor.create_video_with_audio_and_subtitles(
+                        video_source,
+                        str(ktv_mix_file),
+                        ass_file,
+                        str(final_output),
+                    )
+                else:
+                    logger.warning("No ASS subtitle file found, creating video without burned subtitles.")
+                    processor.create_video_with_audio(
+                        video_source,
+                        str(ktv_mix_file),
+                        str(final_output),
+                    )
             
             print(f"  ✓ Final file created")
+
+            # ========== [8/8] 由 MP4 + ASS 產生 MPG（硬燒字幕） ==========
+            if output_format == "mp4" and subtitle_files:
+                print("[8/8] Creating MPG with burned-in subtitles for DVD players...")
+                logger.info("Step 8: Creating MPG with burned subtitles")
+
+                # 先拿第一個字幕檔（通常就是 .ass）
+                subtitle_file = subtitle_files[0]
+                dvd_output = output_path / f"{title}_ktv_dvd.mpg"
+
+                processor.create_mpg_with_subtitles(
+                    video_file=str(final_output),        # 剛做好的 xxx_ktv.mp4
+                    subtitle_file=str(subtitle_file),    # xxx_ktv.ass
+                    output_file=str(dvd_output),
+                )
+
+                print(f"  ✓ DVD MPG file created: {dvd_output.name}")
+            elif output_format == "mp4" and not subtitle_files:
+                logger.warning("No subtitles found; skip MPG DVD creation.")            
             
         except Exception as e:
             logger.error(f"Error creating final output: {e}")
