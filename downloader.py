@@ -25,12 +25,24 @@ class MediaDownloader:
 
         logger.info(f"Downloading media from URL: {url}")
         
+        # yt-dlp 基本設定
         ydl_opts = {
             'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
             'outtmpl': str(self.temp_folder / '%(title)s.%(ext)s'),
             'quiet': False,
             'no_warnings': False,
         }
+
+        # ⭐ 在這裡加上 cookies.txt 支援
+        cookies_path = Path("/content/cookies.txt")
+        if cookies_path.exists():
+            ydl_opts["cookiefile"] = str(cookies_path)
+            logger.info(f"Using cookies file: {cookies_path}")
+        else:
+            logger.warning(
+                "cookies.txt not found at /content/cookies.txt, "
+                "downloading without cookies (可能會被 YouTube 要求登入 / 驗證)"
+            )
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
